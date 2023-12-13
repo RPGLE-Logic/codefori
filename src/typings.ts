@@ -191,3 +191,5 @@ export interface SourcePhysicalFileItem extends FilteredItem, WithPath {
 export interface MemberItem extends FilteredItem, WithPath {
   member: IBMiMember
 }
+
+export const IFS_BROWSER_MIMETYPE = "application/vnd.code.tree.ifsbrowser";

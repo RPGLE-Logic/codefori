@@ -10,9 +10,11 @@ import { GlobalStorage } from "../api/Storage";
 import { Tools } from "../api/Tools";
 import { instance, setSearchResults } from "../instantiate";
 import { t } from "../locale";
-import { BrowserItem, BrowserItemParameters, FocusOptions, IFSFile, WithPath } from "../typings";
+import { BrowserItem, BrowserItemParameters, FocusOptions, IFSFile, IFS_BROWSER_MIMETYPE, WithPath } from "../typings";
 
 const PROTECTED_DIRS = /^(\/|\/QOpenSys|\/QSYS\.LIB|\/QDLS|\/QOPT|\/QNTC|\/QFileSvr\.400|\/bin|\/dev|\/home|\/tmp|\/usr|\/var)$/i;
+type DnDBehavior = "ask" | "copy" | "move";
+const getDragDropBehavior = () => GlobalConfiguration.get<DnDBehavior>(`IfsBrowser.DragAndDropDefaultBehavior`) ? `name` : `type`;
 
 class IFSBrowser implements vscode.TreeDataProvider<BrowserItem> {
   private readonly emitter = new vscode.EventEmitter<BrowserItem | BrowserItem[] | undefined | null | void>();
@@ -167,7 +169,7 @@ class IFSShortcutItem extends IFSDirectoryItem {
   constructor(readonly shortcut: string) {
     super({ name: shortcut, path: shortcut, type: "directory" })
 
-    this.contextValue = `shortcut${ PROTECTED_DIRS.test(this.path) ? `_protected` : ``}`;
+    this.contextValue = `shortcut${PROTECTED_DIRS.test(this.path) ? `_protected` : ``}`;
     this.iconPath = new vscode.ThemeIcon("folder-library");
   }
 }
@@ -178,12 +180,58 @@ class ErrorItem extends BrowserItem {
   }
 }
 
+class IFSBrowserDnD implements vscode.TreeDragAndDropController<IFSItem> {
+  readonly dragMimeTypes = [IFS_BROWSER_MIMETYPE];
+  readonly dropMimeTypes = ["text/uri-list", IFS_BROWSER_MIMETYPE];
+
+  handleDrag(source: readonly IFSItem[], dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken) {
+    dataTransfer.set(IFS_BROWSER_MIMETYPE, new vscode.DataTransferItem(source));
+  }
+
+  async handleDrop(target: IFSItem | undefined, dataTransfer: vscode.DataTransfer, token: vscode.CancellationToken) {
+    if (target) {
+      let toDirectory;
+      if (target.file.type === "streamfile") {
+        toDirectory = (target.parent as IFSItem).path;
+      }
+      else {
+        toDirectory = target.path;
+      }
+
+      const ifsBrowserItems = dataTransfer.get(IFS_BROWSER_MIMETYPE);
+      if (ifsBrowserItems) {
+        this.moveOrCopyItems(ifsBrowserItems.value as IFSItem[], toDirectory)
+      }
+      else {
+        const explorerItems = dataTransfer.get("text/uri-list");
+        if (explorerItems && explorerItems.value) {
+          //"text/uri-list" Mime type is a string with `toString()`ed Uris separated by `\r\n`.
+          const uris = (await explorerItems.asString()).split("\r\n");
+          this.uploadFiles(uris, toDirectory);
+        }
+      }
+    }
+  }
+  private uploadFiles(uris: string[], toDirectory: string) {
+    console.log(uris);
+    console.log(toDirectory);
+  }
+
+  private moveOrCopyItems(ifsBrowserItems: IFSItem[], toDirectory: string) {
+    const items = ifsBrowserItems;
+    console.log(items);
+    console.log(toDirectory);
+  }
+
+}
+
 export function initializeIFSBrowser(context: vscode.ExtensionContext) {
   const ifsBrowser = new IFSBrowser();
   const ifsTreeViewer = vscode.window.createTreeView(
     `ifsBrowser`, {
     treeDataProvider: ifsBrowser,
-    showCollapseAll: true
+    showCollapseAll: true,
+    dragAndDropController: new IFSBrowserDnD()
   });
 
   instance.onEvent(`connected`, () => ifsBrowser.refresh());
@@ -423,10 +471,10 @@ export function initializeIFSBrowser(context: vscode.ExtensionContext) {
             if (deletionConfirmed) {
               try {
                 const removeResult = await connection.sendCommand({ command: `rm -rf ${Tools.escapePath(node.path)}` })
-                if(removeResult.code === 0){
+                if (removeResult.code === 0) {
                   vscode.window.showInformationMessage(t(`ifsBrowser.deleteIFS.infoMessage`, node.path));
                 }
-                else{
+                else {
                   throw removeResult.stderr;
                 }
                 if (GlobalConfiguration.get(`autoRefresh`)) {
